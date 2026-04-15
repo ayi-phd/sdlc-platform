@@ -1,20 +1,56 @@
+import os
 import json
 import subprocess
 from pathlib import Path
 import argparse
-import uuid
 import sys
+
+from dotenv import load_dotenv
+from modules.pr_review_stage import run_pr_review_stage
 
 # ========= CONFIG =========
 
 AGENTS_PATH = Path("agents")
 MAX_FIX_RETRIES = 2
 
+CONFIG = {
+    "enable_ai_pr_review": True,
+    "require_approval": False,
+    "auto_merge_on_pass": False,
+    "max_fix_iterations": 3,
+}
+
+# Load secret keys from .env file
+##load_dotenv()
+##CONFIG["github_token"] = os.getenv("GITHUB_TOKEN")
+
+# Helper to get remote repo info
+def get_repo_info(repo_path):
+    result = subprocess.check_output(
+        ["git", "remote", "get-url", "origin"],
+        cwd=repo_path,
+        text=True
+    ).strip()
+
+    if result.startswith("git@"):
+        path = result.split(":", 1)[1]
+    else:
+        path = result.split("github.com/")[1]
+
+    path = path.replace(".git", "")
+    owner, repo = path.split("/", 1)
+
+    return owner, repo
+
+# Workflow steps
 STEPS = [
     "requirements",
     "planning",
     "implementation",
     "testing",
+    "git_prepare",
+    "create_pr",
+    "pr_review",
     "release_notes"
 ]
 
@@ -27,6 +63,13 @@ parser.add_argument("--reset", action="store_true")
 args = parser.parse_args()
 
 REPO_PATH = Path(args.repo).resolve()
+
+# Set repo info
+owner, repo = get_repo_info(REPO_PATH)
+CONFIG["repo_owner"] = owner
+CONFIG["repo_name"] = repo
+print(f"🔗 Repo detected: {owner}/{repo}")
+
 SDLC_PATH = REPO_PATH / ".sdlc"
 
 STORY_ID = args.story
@@ -56,6 +99,18 @@ def inject(template: str, variables: dict):
         template = template.replace(f"{{{{{k}}}}}", v or "")
     return template
 
+def get_branch_name():
+    return STORY_ID.lower()
+
+def branch_exists_remote(branch):
+    result = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin", branch],
+        cwd=REPO_PATH,
+        capture_output=True,
+        text=True
+    )
+    return bool(result.stdout.strip())
+
 # ========= STATE =========
 
 def load_state():
@@ -67,27 +122,17 @@ def load_state():
 
     return {
         "current_step": "requirements",
-        "last_completed_step": None,
         "status": "NOT_STARTED",
-        "retries": 0
+        "retries": 0,
+        "pr_number": None
     }
 
 def save_state(state):
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
-# ========= USER INPUT =========
-
-def ask_user_action():
-    print("\nChoose action:")
-    print("1) Attempt auto-fix and retest")
-    print("2) Skip and continue")
-    print("3) Abort")
-
-    while True:
-        choice = input("Enter choice (1/2/3): ").strip()
-        if choice in ["1", "2", "3"]:
-            return choice
-        print("Invalid choice. Please enter 1, 2, or 3.")
+def next_step(current):
+    idx = STEPS.index(current)
+    return STEPS[idx + 1] if idx + 1 < len(STEPS) else None
 
 # ========= CLAUDE =========
 
@@ -118,113 +163,287 @@ def extract_json(output: str):
     import re
     matches = re.findall(r"\{.*\}", output, re.DOTALL)
     if not matches:
-        raise Exception(f"No JSON in output:\n{output}")
+        raise Exception("No JSON found")
     return json.loads(matches[-1])
 
 def run_agent(name: str, variables: dict):
     template = load_agent(name)
     prompt = inject(template, variables)
-
-    output = call_claude(prompt)
-    parsed = extract_json(output)
-
-    return parsed
+    return extract_json(call_claude(prompt))
 
 def run_claude_code(prompt: str):
-    print("\n🤖 Running Claude Code...\n")
-
     subprocess.run(
-        ["claude", 
-         "--print", 
-         "--permission-mode",
-         "acceptEdits",
-         "-p",
-         prompt],
+        ["claude", "--print", "--permission-mode", "acceptEdits", "-p", prompt],
         cwd=REPO_PATH,
         check=True
     )
 
-# --- Run Claud Code in execution mode in order to avoid write permission issue
-def run_claude_code_exec(prompt: str):
-    print("\n🤖 Running Claude Code (execution mode)...\n")
+# ========= STEP FUNCTIONS =========
 
-    process = subprocess.Popen(
-        ["claude"],
-        cwd=REPO_PATH,
-        stdin=subprocess.PIPE,
-        text=True
-    )
-
-    process.communicate(prompt)
-
-    if process.returncode != 0:
-        raise Exception("Claude Code execution failed")
-
-# ========= STEPS =========
-
-def step_requirements():
+def step_requirements(state):
     input_md = read_file(STORY_PATH / "input.md")
-    if not input_md.strip():
-        raise Exception("input.md is empty")
-
     result = run_agent("requirements", {"input": input_md})
     write_artifact("requirements", json.dumps(result, indent=2))
-    return result
+    input("\n👉 Approve requirements")
+    return next_step("requirements")
 
-def step_planning():
+def step_planning(state):
     result = run_agent("planning", {
         "requirements": read_artifact("requirements")
     })
     write_artifact("plan", json.dumps(result, indent=2))
-    return result
+    input("\n👉 Approve plan")
+    return next_step("planning")
 
-def step_implementation(plan=None, fix_context=None):
-    template = load_agent("implementation")
+def step_implementation(state):
+    plan = read_artifact("plan")
 
-    payload = {
-        "plan": json.dumps(fix_context if fix_context else plan, indent=2)
-    }
-
-    prompt = inject(template, payload)
+    prompt = inject(load_agent("implementation"), {
+        "plan": plan
+    })
 
     run_claude_code(prompt)
 
-    subprocess.run(["git", "checkout", "-B", STORY_ID], cwd=REPO_PATH)
-    subprocess.run(["git", "add", "."], cwd=REPO_PATH)
-    subprocess.run(["git", "commit", "-m", f"AI: {STORY_ID}"], cwd=REPO_PATH)
+    ##subprocess.run(["git", "checkout", "-B", STORY_ID], cwd=REPO_PATH)
+    ##subprocess.run(["git", "add", "."], cwd=REPO_PATH)
+    ##subprocess.run(["git", "commit", "-m", f"AI: {STORY_ID}"], cwd=REPO_PATH)
 
-def step_tests():
-    print("\n🧪 Running tests...\n")
+    return next_step("implementation")
 
+def step_testing(state):
+    while True:
+        result = subprocess.run(
+            ["mvn", "test"],
+            cwd=REPO_PATH,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0:
+            print("\n✅ Tests passed\n")
+            state["retries"] = 0
+            return next_step("testing")
+
+        print("\n❌ Tests failed\n")
+
+        analysis = run_agent("test-report-analysis", {
+            "test_output": result.stdout + result.stderr,
+            "plan": read_artifact("plan"),
+            "requirements": read_artifact("requirements")
+        })
+
+        print("\n--- TEST ANALYSIS ---")
+        print(analysis.get("summary", ""))
+
+        choice = input("\n1) Fix  2) Skip  3) Abort: ")
+
+        if choice == "1":
+            if state["retries"] >= MAX_FIX_RETRIES:
+                print("Max retries reached")
+                continue
+
+            run_claude_code(inject(load_agent("implementation"), {
+                "plan": json.dumps(analysis, indent=2)
+            }))
+
+            state["retries"] += 1
+            continue
+
+        elif choice == "2":
+            return next_step("testing")
+
+        else:
+            sys.exit(1)
+
+def step_git_prepare(state):
+    branch = get_branch_name()
+
+    print(f"\n🌿 Preparing git branch: {branch}")
+
+    exists_remote = branch_exists_remote(branch)
+
+    if exists_remote:
+        print("🔁 Remote branch exists — syncing")
+
+        # fetch latest remote state
+        subprocess.run(
+            ["git", "fetch", "origin", branch],
+            cwd=REPO_PATH,
+            check=True
+        )
+
+        # checkout branch (track remote)
+        subprocess.run(
+            ["git", "checkout", branch],
+            cwd=REPO_PATH,
+            check=True
+        )
+
+        # optional: rebase onto remote (safe sync)
+        subprocess.run(
+            ["git", "rebase", f"origin/{branch}"],
+            cwd=REPO_PATH,
+            check=True
+        )
+
+    else:
+        print("🆕 Creating new branch")
+
+        subprocess.run(
+            ["git", "checkout", "-B", branch],
+            cwd=REPO_PATH,
+            check=True
+        )
+
+    # -----------------------------
+    # Commit changes (if any)
+    # -----------------------------
     result = subprocess.run(
-        ["mvn", "test"],
+        ["git", "status", "--porcelain"],
         cwd=REPO_PATH,
         capture_output=True,
         text=True
     )
 
-    return {
-        "status": "SUCCESS" if result.returncode == 0 else "FAILED",
-        "output": result.stdout + result.stderr
-    }
+    if result.stdout.strip():
+        subprocess.run(
+            ["git", "add", "."],
+            cwd=REPO_PATH,
+            check=True
+        )
 
-def step_test_analysis(output):
-    result = run_agent("test-report-analysis", {
-        "test_output": output,
-        "plan": read_artifact("plan"),
-        "requirements": read_artifact("requirements")
-    })
+        subprocess.run(
+            ["git", "commit", "-m", f"AI: {branch}"],
+            cwd=REPO_PATH,
+            check=True
+        )
 
-    write_artifact("test_analysis", json.dumps(result, indent=2))
-    return result
+        print("✅ Changes committed")
+    else:
+        print("ℹ️ No changes to commit")
 
-def step_release_notes():
+    # -----------------------------
+    # Push logic
+    # -----------------------------
+    if exists_remote:
+        print("⬆️ Pushing updates to existing branch")
+        subprocess.run(
+            ["git", "push"],
+            cwd=REPO_PATH,
+            check=True
+        )
+    else:
+        print("🚀 Pushing new branch to origin")
+        subprocess.run(
+            ["git", "push", "-u", "origin", branch],
+            cwd=REPO_PATH,
+            check=True
+        )
+
+    return next_step("git_prepare")
+
+#def create_pr_json():
+#    result = subprocess.check_output(
+#        ["gh", "pr", "create", "--fill", "--json", "number"],
+#        cwd=REPO_PATH,
+#        text=True
+#    )
+#    return json.loads(result)["number"]
+
+import subprocess
+import json
+
+def get_current_branch():
+    result = subprocess.check_output(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=REPO_PATH,
+        text=True
+    )
+    return result.strip()
+
+def create_pr():
+    # .strip() is essential to prevent shell character injection
+    head_branch = get_current_branch().strip()
+    base_branch = "develop"
+    repo = "ayi-phd/auth-server"
+
+    print(f"DEBUG: GH_TOKEN in Python: {os.environ.get('GH_TOKEN', 'NOT FOUND')}")
+    print(f"DEBUG: GITHUB_TOKEN in Python: {os.environ.get('GITHUB_TOKEN', 'NOT FOUND')}")
+
+    print(f"🔗 Final Attempt: Creating PR via GH Wrapper...")
+
+    # Using 'gh pr create' instead of raw 'gh api' 
+    # This command handles the 'not all refs are readable' error internally 
+    # by ensuring the local and remote git objects are synced.
+    result = subprocess.run(
+        [
+            "gh", "pr", "create",
+            "--repo", repo,
+            "--base", base_branch,
+            "--head", head_branch,
+            "--title", f"AI: {head_branch}",
+            "--body", "Automated PR created by run.py"
+        ],
+        cwd=REPO_PATH,
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        # This will give us a human-readable reason if it still fails
+        print("\n--- CRITICAL ERROR ---")
+        print(f"STDERR: {result.stderr}")
+        raise Exception("Failed to create PR using GH wrapper.")
+
+    # The wrapper returns the URL of the created PR (e.g., .../pull/11)
+    pr_url = result.stdout.strip()
+    print(f"✅ PR Created Successfully: {pr_url}")
+    
+    # Extract the number from the end of the URL
+    return pr_url.split("/")[-1]
+
+def step_create_pr(state):
+    if not state.get("pr_number"):
+        pr_number = create_pr()
+        state["pr_number"] = pr_number
+        print(f"🔗 PR created: #{pr_number}")
+    return next_step("create_pr")
+
+def step_pr_review(state):
+    pr_number = state.get("pr_number")
+    if not pr_number:
+        raise Exception("Missing PR number")
+
+    merged = run_pr_review_stage(CONFIG, pr_number)
+
+    if not merged:
+        print("❌ PR not merged")
+        sys.exit(1)
+
+    return next_step("pr_review")
+
+def step_release_notes(state):
     result = run_agent("release-notes", {
         "requirements": read_artifact("requirements"),
         "plan": read_artifact("plan")
     })
 
     (STORY_PATH / "release_notes.md").write_text(result.get("summary", ""))
+    state["status"] = "DONE"
+    return None
+
+# ========= STEP REGISTRY =========
+
+STEP_HANDLERS = {
+    "requirements": step_requirements,
+    "planning": step_planning,
+    "implementation": step_implementation,
+    "testing": step_testing,
+    "git_prepare": step_git_prepare,
+    "create_pr": step_create_pr,
+    "pr_review": step_pr_review,
+    "release_notes": step_release_notes
+}
 
 # ========= MAIN =========
 
@@ -233,100 +452,17 @@ def main():
     state = load_state()
 
     print(f"\n🚀 SDLC RUN: {STORY_ID}")
-    print(f"Resuming from: {state['current_step']}\n")
+    print(f"Starting at: {state['current_step']}\n")
 
     try:
-        # ===== REQUIREMENTS =====
-        if state["current_step"] == "requirements":
-            step_requirements()
-            state.update({
-                "last_completed_step": "requirements",
-                "current_step": "planning"
-            })
-            save_state(state)
-            input("\n👉 Approve requirements")
+        while state["current_step"]:
+            step = state["current_step"]
+            print(f"\n=== STEP: {step.upper()} ===\n")
 
-        # ===== PLANNING =====
-        if state["current_step"] == "planning":
-            step_planning()
-            state.update({
-                "last_completed_step": "planning",
-                "current_step": "implementation"
-            })
-            save_state(state)
-            input("\n👉 Approve plan")
+            handler = STEP_HANDLERS[step]
+            next_s = handler(state)
 
-        # ===== IMPLEMENTATION =====
-        if state["current_step"] == "implementation":
-            step_implementation(plan=read_artifact("plan"))
-            state.update({
-                "last_completed_step": "implementation",
-                "current_step": "testing",
-                "retries": 0
-            })
-            save_state(state)
-
-        # ===== TEST LOOP WITH HUMAN CONTROL =====
-        if state["current_step"] == "testing":
-            while True:
-                result = step_tests()
-
-                if result["status"] == "SUCCESS":
-                    print("\n✅ Tests passed\n")
-                    state.update({
-                        "last_completed_step": "testing",
-                        "current_step": "release_notes",
-                        "retries": 0
-                    })
-                    save_state(state)
-                    break
-
-                print("\n❌ Tests failed\n")
-
-                analysis = step_test_analysis(result["output"])
-
-                print("\n--- TEST ANALYSIS SUMMARY ---")
-                print(analysis.get("summary", "No summary available"))
-
-                choice = ask_user_action()
-
-                if choice == "1":
-                    if state["retries"] >= MAX_FIX_RETRIES:
-                        print("\n❌ Max retries reached")
-                        continue
-
-                    if "permission" in analysis.get("summary", "").lower():
-                        print("\n❌ Claude permission issue — fix CLI config first")
-                        continue
-
-                    print("\n🔁 Auto-fix attempt...\n")
-
-                    step_implementation(fix_context=analysis)
-
-                    state["retries"] += 1
-                    save_state(state)
-
-                    continue
-
-                elif choice == "2":
-                    print("\n⚠️ Skipping tests — continuing pipeline\n")
-                    state.update({
-                        "last_completed_step": "testing",
-                        "current_step": "release_notes"
-                    })
-                    save_state(state)
-                    break
-
-                elif choice == "3":
-                    print("\n🛑 Aborting SDLC flow\n")
-                    state["status"] = "ABORTED"
-                    save_state(state)
-                    sys.exit(1)
-
-        # ===== RELEASE =====
-        if state["current_step"] == "release_notes":
-            step_release_notes()
-            state["status"] = "DONE"
+            state["current_step"] = next_s
             save_state(state)
 
         print("\n🎉 SDLC COMPLETE\n")
@@ -336,7 +472,6 @@ def main():
         save_state(state)
         sys.exit(1)
 
-# ========= ENTRY =========
 
 if __name__ == "__main__":
     main()
