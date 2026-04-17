@@ -1,4 +1,5 @@
 from modules.ai_pr_reviewer import AiPrReviewer
+import sys
 
 
 def run_pr_review_stage(config, pr_number):
@@ -23,19 +24,13 @@ def run_pr_review_stage(config, pr_number):
         print("✅ AI review passed")
 
         if config.get("auto_merge_on_pass"):
-            reviewer.approve_and_merge(
-                pr_number,
-                require_approval=config.get("require_approval", False)
-            )
+            reviewer.approve_and_merge(pr_number)
             return True
 
         user_input = input("Approve & merge PR? (y/n): ").strip().lower()
 
         if user_input == "y":
-            reviewer.approve_and_merge(
-                pr_number,
-                require_approval=config.get("require_approval", False)
-            )
+            reviewer.approve_and_merge(pr_number)
             return True
 
         return False
@@ -51,16 +46,15 @@ def run_pr_review_stage(config, pr_number):
     while iteration < max_iterations:
         iteration += 1
 
-        action = input("\nChoose: [f]ix, [v]iew, [s]kip: ").strip().lower()
+        action = input("\nChoose: [f]ix, [a]ccept, [s]kip, [q]uit: ").strip().lower()
 
-        if action == "v":
-            print(review)
-
-        elif action == "f":
+        # -----------------------------
+        # FIX
+        # -----------------------------
+        if action == "f":
             print(f"🛠 Fix iteration {iteration}/{max_iterations}")
 
             # 🔌 Hook for your fix pipeline
-            # Example:
             # apply_fixes(review["issues"])
 
             input("Press Enter after fixes are pushed...")
@@ -78,8 +72,35 @@ def run_pr_review_stage(config, pr_number):
 
                 return False
 
+        # -----------------------------
+        # ACCEPT (merge anyway)
+        # -----------------------------
+        elif action == "a":
+            print("\n⚠️ Accepting PR despite issues...\n")
+
+            reviewer.force_merge(pr_number)
+            return True
+
+        # -----------------------------
+        # SKIP (do not merge)
+        # -----------------------------
         elif action == "s":
+            print("\n⏭ Skipping PR (not merging)\n")
             return False
+
+        # -----------------------------
+        # QUIT (exit pipeline)
+        # -----------------------------
+        elif action == "q":
+            print("\n🛑 Quitting pipeline...\n")
+            sys.exit(1)
+
+        # -----------------------------
+        # INVALID INPUT
+        # -----------------------------
+        else:
+            print("Invalid choice. Please select f, a, s, or q.")
+            iteration -= 1  # don't count invalid input
 
     print("❌ Max fix iterations reached")
     return False

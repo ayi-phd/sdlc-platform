@@ -5,7 +5,7 @@ from pathlib import Path
 import argparse
 import sys
 
-from dotenv import load_dotenv
+##from dotenv import load_dotenv
 from modules.pr_review_stage import run_pr_review_stage
 
 # ========= CONFIG =========
@@ -180,6 +180,44 @@ def run_claude_code(prompt: str):
 
 # ========= STEP FUNCTIONS =========
 
+import subprocess
+import json
+import os
+
+def build_repo_context_full():
+    import os
+
+    files = []
+
+    for root, dirs, filenames in os.walk(REPO_PATH):
+        # Skip .git and .sdlc (important)
+        dirs[:] = [d for d in dirs if d not in [".git", ".sdlc", "target", "node_modules"]]
+
+        for f in filenames:
+            full_path = os.path.join(root, f)
+            rel_path = os.path.relpath(full_path, REPO_PATH)
+            files.append(rel_path)
+
+    # Limit size
+    MAX_FILES = 2000
+    files = files[:MAX_FILES]
+
+    contents = {}
+    MAX_FILE_SIZE = 3000
+
+    for f in files:
+        if any(f.endswith(ext) for ext in [
+            ".xml", ".gradle", ".json", ".yml", ".yaml",
+            ".properties", ".html", ".java", ".ts"
+        ]):
+            try:
+                with open(os.path.join(REPO_PATH, f), "r") as file:
+                    contents[f] = file.read()[:MAX_FILE_SIZE]
+            except:
+                pass
+
+    return files, contents
+
 def step_requirements(state):
     input_md = read_file(STORY_PATH / "input.md")
     result = run_agent("requirements", {"input": input_md})
@@ -188,10 +226,56 @@ def step_requirements(state):
     return next_step("requirements")
 
 def step_planning(state):
+    print("\n🔍 Detecting tech stack...\n")
+
+    # -----------------------------
+    # Build repo context
+    # -----------------------------
+    files, contents = build_repo_context_full()
+
+    stack_prompt = f"""
+You are analyzing a code repository.
+
+You DO NOT have filesystem access.
+Use ONLY the provided data.
+
+FULL repository file list:
+{files}
+
+Sample file contents:
+{json.dumps(contents, indent=2)}
+
+Return STRICT JSON:
+
+{{
+  "backend": "...",
+  "frontend": "...",
+  "frameworks": [],
+  "languages": [],
+  "build_tools": "...",
+  "notes": "..."
+}}
+"""
+
+    stack_output = call_claude(stack_prompt)
+    stack = extract_json(stack_output)
+
+    print("\n🧠 Detected stack:")
+    print(json.dumps(stack, indent=2))
+
+    # Save it (optional but useful)
+    write_artifact("stack", json.dumps(stack, indent=2))
+
+    # -----------------------------
+    # Planning step (WITH STACK)
+    # -----------------------------
     result = run_agent("planning", {
-        "requirements": read_artifact("requirements")
+        "requirements": read_artifact("requirements"),
+        "stack": json.dumps(stack, indent=2)
     })
+
     write_artifact("plan", json.dumps(result, indent=2))
+
     input("\n👉 Approve plan")
     return next_step("planning")
 
@@ -203,10 +287,6 @@ def step_implementation(state):
     })
 
     run_claude_code(prompt)
-
-    ##subprocess.run(["git", "checkout", "-B", STORY_ID], cwd=REPO_PATH)
-    ##subprocess.run(["git", "add", "."], cwd=REPO_PATH)
-    ##subprocess.run(["git", "commit", "-m", f"AI: {STORY_ID}"], cwd=REPO_PATH)
 
     return next_step("implementation")
 
@@ -341,14 +421,6 @@ def step_git_prepare(state):
         )
 
     return next_step("git_prepare")
-
-#def create_pr_json():
-#    result = subprocess.check_output(
-#        ["gh", "pr", "create", "--fill", "--json", "number"],
-#        cwd=REPO_PATH,
-#        text=True
-#    )
-#    return json.loads(result)["number"]
 
 import subprocess
 import json

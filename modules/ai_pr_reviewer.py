@@ -220,3 +220,16 @@ Diff:
             raise Exception("❌ Cannot merge: AI review requires changes")
 
         return self.merge_pr(pr_number)
+    
+    def force_merge(self, pr_number):
+        print(f"\n🚀 Force merging PR #{pr_number} (override AI review)...\n")
+
+        self.gh_api(
+            [
+                f"repos/{self.owner}/{self.repo}/pulls/{pr_number}/merge",
+                "-X", "PUT",
+                "-f", "merge_method=squash"
+            ]
+    )
+
+    print("✅ PR force-merged successfully")    
