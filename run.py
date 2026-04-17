@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 import argparse
 import sys
+from modules.deploy_to_test import deploy_to_test
 
 ##from dotenv import load_dotenv
 from modules.pr_review_stage import run_pr_review_stage
@@ -18,6 +19,10 @@ CONFIG = {
     "require_approval": False,
     "auto_merge_on_pass": False,
     "max_fix_iterations": 3,
+
+    "deploy_host": "35.88.13.248",
+    "deploy_user": "ec2-user",
+    "deploy_key": "~/.ssh/unicorn-key-pair-prod.pem"
 }
 
 # Load secret keys from .env file
@@ -51,6 +56,7 @@ STEPS = [
     "git_prepare",
     "create_pr",
     "pr_review",
+    "deploy_to_test",
     "release_notes"
 ]
 
@@ -433,46 +439,75 @@ def get_current_branch():
     )
     return result.strip()
 
+import os
+import subprocess
+import time
+
 def create_pr():
-    # .strip() is essential to prevent shell character injection
+    # 1. Resolve REPO_PATH to get the folder name dynamically
+    # os.path.abspath handles relative paths like '../unicorn-spring-ai-agent'
+    abs_path = os.path.abspath(REPO_PATH)
+    repo_folder = os.path.basename(abs_path)
+    repo_name = f"ayi-phd/{repo_folder}"
+
+    # 2. Extract branch info
     head_branch = get_current_branch().strip()
     base_branch = "develop"
-    repo = "ayi-phd/auth-server"
 
-    print(f"DEBUG: GH_TOKEN in Python: {os.environ.get('GH_TOKEN', 'NOT FOUND')}")
-    print(f"DEBUG: GITHUB_TOKEN in Python: {os.environ.get('GITHUB_TOKEN', 'NOT FOUND')}")
+    print(f"\n=== STEP: CREATE_PR ===")
+    print(f"DEBUG: REPO_PATH (raw): {REPO_PATH}")
+    print(f"DEBUG: REPO_PATH (resolved): {abs_path}")
+    print(f"DEBUG: Derived Repo Name: {repo_name}")
+    print(f"DEBUG: Head Branch: {head_branch}")
+    print(f"DEBUG: GITHUB_TOKEN in Env: {'FOUND' if 'GITHUB_TOKEN' in os.environ else 'NOT FOUND'}")
 
-    print(f"🔗 Final Attempt: Creating PR via GH Wrapper...")
+    # 3. Sanitize Environment
+    # We remove the GITHUB_TOKEN so 'gh' uses your authenticated Mac session
+    clean_env = os.environ.copy()
+    if "GITHUB_TOKEN" in clean_env:
+        print(f"DEBUG: Scrubbing GITHUB_TOKEN from subprocess environment.")
+        del clean_env["GITHUB_TOKEN"]
+    clean_env.pop("GH_TOKEN", None)
 
-    # Using 'gh pr create' instead of raw 'gh api' 
-    # This command handles the 'not all refs are readable' error internally 
-    # by ensuring the local and remote git objects are synced.
-    result = subprocess.run(
-        [
-            "gh", "pr", "create",
-            "--repo", repo,
-            "--base", base_branch,
-            "--head", head_branch,
-            "--title", f"AI: {head_branch}",
-            "--body", "Automated PR created by run.py"
-        ],
-        cwd=REPO_PATH,
-        capture_output=True,
-        text=True
-    )
+    # 4. Execution with Retry Loop
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        print(f"🔗 Attempt {attempt}: Creating PR via GH Wrapper for {repo_name}...")
+        
+        result = subprocess.run(
+            [
+                "gh", "pr", "create",
+                "--repo", repo_name,
+                "--base", base_branch,
+                "--head", head_branch,
+                "--title", f"AI: {head_branch}",
+                "--body", "Automated PR created by run.py"
+            ],
+            cwd=REPO_PATH,
+            capture_output=True,
+            text=True,
+            env=clean_env
+        )
 
-    if result.returncode != 0:
-        # This will give us a human-readable reason if it still fails
-        print("\n--- CRITICAL ERROR ---")
-        print(f"STDERR: {result.stderr}")
-        raise Exception("Failed to create PR using GH wrapper.")
+        if result.returncode == 0:
+            pr_url = result.stdout.strip()
+            print(f"✅ PR Created Successfully: {pr_url}")
+            return pr_url.split("/")[-1]
+        
+        # Capture failure details
+        stderr = result.stderr.strip()
+        print(f"DEBUG: Attempt {attempt} failed.")
+        print(f"DEBUG: STDERR: {stderr}")
 
-    # The wrapper returns the URL of the created PR (e.g., .../pull/11)
-    pr_url = result.stdout.strip()
-    print(f"✅ PR Created Successfully: {pr_url}")
-    
-    # Extract the number from the end of the URL
-    return pr_url.split("/")[-1]
+        # Check for indexing lag
+        if any(err in stderr.lower() for err in ["sha", "no commits", "not found"]):
+            print(f"⏳ GitHub indexing lag suspected. Retrying in 5s...")
+            time.sleep(5)
+        else:
+            print(f"❌ Permanent Error Encountered.")
+            break
+
+    raise Exception(f"FAILURE: Failed to create PR for {repo_name} after {max_retries} attempts.")
 
 def step_create_pr(state):
     if not state.get("pr_number"):
@@ -488,6 +523,8 @@ def step_pr_review(state):
 
     merged = run_pr_review_stage(CONFIG, pr_number)
 
+    state["merged"] = merged   # 👈 THIS IS THE FIX
+
     if not merged:
         print("❌ PR not merged")
         sys.exit(1)
@@ -495,14 +532,40 @@ def step_pr_review(state):
     return next_step("pr_review")
 
 def step_release_notes(state):
-    result = run_agent("release-notes", {
-        "requirements": read_artifact("requirements"),
-        "plan": read_artifact("plan")
-    })
+    print("\n📝 Generating release notes...\n")
 
-    (STORY_PATH / "release_notes.md").write_text(result.get("summary", ""))
+    # -----------------------------
+    # Get actual code changes
+    # -----------------------------
+    diff = subprocess.check_output(
+        ["git", "diff", "origin/develop~1", "origin/develop"],
+        cwd=REPO_PATH,
+        text=True
+    )
+
+    prompt = f"""
+    Generate concise release notes (1–5 sentences) based on the following code changes.
+
+    Focus on:
+    - user-visible changes
+    - feature behavior
+    - bug fixes
+
+    Do NOT describe internal tooling or pipelines.
+
+    Code diff:
+    {diff[:12000]}
+    """
+
+    output = call_claude(prompt)
+
+    (STORY_PATH / "release_notes.md").write_text(output.strip())
+
     state["status"] = "DONE"
     return None
+
+def step_deploy_to_test(state):
+    return deploy_to_test(state, REPO_PATH, CONFIG)
 
 # ========= STEP REGISTRY =========
 
@@ -514,6 +577,7 @@ STEP_HANDLERS = {
     "git_prepare": step_git_prepare,
     "create_pr": step_create_pr,
     "pr_review": step_pr_review,
+    "deploy_to_test": step_deploy_to_test,
     "release_notes": step_release_notes
 }
 
