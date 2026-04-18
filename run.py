@@ -1,4 +1,5 @@
 import os
+import time
 import json
 import subprocess
 from pathlib import Path
@@ -97,7 +98,7 @@ def write_artifact(name: str, content: str):
 def read_artifact(name: str):
     return read_file(ARTIFACTS / f"{name}.json")
 
-def load_agent(name: str):
+def load_agent_skill(name: str):
     return (AGENTS_PATH / name / "SKILL.md").read_text()
 
 def inject(template: str, variables: dict):
@@ -142,7 +143,8 @@ def next_step(current):
 
 # ========= CLAUDE =========
 
-def call_claude(prompt: str):
+def call_claude(prompt: str, stream: bool = True):
+    ####if stream:
     print("\n--- CLAUDE RUNNING ---\n")
 
     process = subprocess.Popen(
@@ -154,10 +156,29 @@ def call_claude(prompt: str):
 
     output = ""
 
-    for line in process.stdout:
-        print(line, end="")
-        output += line
+    # -----------------------------
+    # STREAMING MODE
+    # -----------------------------
+    if stream:
+        for line in process.stdout:
+            print(line, end="")
+            output += line
 
+    # -----------------------------
+    # NON-STREAM MODE
+    # -----------------------------
+    else:
+        stdout, stderr = process.communicate()
+        output = stdout
+
+        if process.returncode != 0:
+            raise Exception(stderr)
+
+        return output
+
+    # -----------------------------
+    # FINALIZE
+    # -----------------------------
     process.wait()
 
     if process.returncode != 0:
@@ -173,11 +194,12 @@ def extract_json(output: str):
     return json.loads(matches[-1])
 
 def run_agent(name: str, variables: dict):
-    template = load_agent(name)
+    template = load_agent_skill(name)
     prompt = inject(template, variables)
     return extract_json(call_claude(prompt))
 
 def run_claude_code(prompt: str):
+    print("\n--- CLAUDE CODE RUNNING ---\n")
     subprocess.run(
         ["claude", "--print", "--permission-mode", "acceptEdits", "-p", prompt],
         cwd=REPO_PATH,
@@ -186,43 +208,19 @@ def run_claude_code(prompt: str):
 
 # ========= STEP FUNCTIONS =========
 
-import subprocess
-import json
-import os
+def build_repo_context_full(repo_path):
+    file_list = []
 
-def build_repo_context_full():
-    import os
-
-    files = []
-
-    for root, dirs, filenames in os.walk(REPO_PATH):
-        # Skip .git and .sdlc (important)
-        dirs[:] = [d for d in dirs if d not in [".git", ".sdlc", "target", "node_modules"]]
-
-        for f in filenames:
+    for root, _, files in os.walk(repo_path):
+        for f in files:
             full_path = os.path.join(root, f)
-            rel_path = os.path.relpath(full_path, REPO_PATH)
-            files.append(rel_path)
 
-    # Limit size
-    MAX_FILES = 2000
-    files = files[:MAX_FILES]
+            # ✅ KEY: make path relative to target repo
+            rel_path = os.path.relpath(full_path, repo_path)
 
-    contents = {}
-    MAX_FILE_SIZE = 3000
+            file_list.append(rel_path)
 
-    for f in files:
-        if any(f.endswith(ext) for ext in [
-            ".xml", ".gradle", ".json", ".yml", ".yaml",
-            ".properties", ".html", ".java", ".ts"
-        ]):
-            try:
-                with open(os.path.join(REPO_PATH, f), "r") as file:
-                    contents[f] = file.read()[:MAX_FILE_SIZE]
-            except:
-                pass
-
-    return files, contents
+    return file_list, {}
 
 def step_requirements(state):
     input_md = read_file(STORY_PATH / "input.md")
@@ -237,7 +235,7 @@ def step_planning(state):
     # -----------------------------
     # Build repo context
     # -----------------------------
-    files, contents = build_repo_context_full()
+    files, contents = build_repo_context_full(REPO_PATH)
 
     stack_prompt = f"""
 You are analyzing a code repository.
@@ -263,7 +261,7 @@ Return STRICT JSON:
 }}
 """
 
-    stack_output = call_claude(stack_prompt)
+    stack_output = call_claude(stack_prompt, stream=False)
     stack = extract_json(stack_output)
 
     print("\n🧠 Detected stack:")
@@ -275,9 +273,12 @@ Return STRICT JSON:
     # -----------------------------
     # Planning step (WITH STACK)
     # -----------------------------
+    files_str = "\n".join(files)
+
     result = run_agent("planning", {
         "requirements": read_artifact("requirements"),
-        "stack": json.dumps(stack, indent=2)
+        "stack": json.dumps(stack, indent=2),
+        "files": files_str
     })
 
     write_artifact("plan", json.dumps(result, indent=2))
@@ -288,7 +289,7 @@ Return STRICT JSON:
 def step_implementation(state):
     plan = read_artifact("plan")
 
-    prompt = inject(load_agent("implementation"), {
+    prompt = inject(load_agent_skill("implementation"), {
         "plan": plan
     })
 
@@ -328,7 +329,7 @@ def step_testing(state):
                 print("Max retries reached")
                 continue
 
-            run_claude_code(inject(load_agent("implementation"), {
+            run_claude_code(inject(load_agent_skill("implementation"), {
                 "plan": json.dumps(analysis, indent=2)
             }))
 
@@ -428,9 +429,6 @@ def step_git_prepare(state):
 
     return next_step("git_prepare")
 
-import subprocess
-import json
-
 def get_current_branch():
     result = subprocess.check_output(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -438,10 +436,6 @@ def get_current_branch():
         text=True
     )
     return result.strip()
-
-import os
-import subprocess
-import time
 
 def create_pr():
     # 1. Resolve REPO_PATH to get the folder name dynamically
