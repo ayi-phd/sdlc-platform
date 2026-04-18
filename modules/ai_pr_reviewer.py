@@ -1,43 +1,13 @@
 import subprocess
 import json
-import re
+
+from modules.utils import call_claude, extract_json
 
 
 class AiPrReviewer:
     def __init__(self, owner, repo):
         self.owner = owner
         self.repo = repo
-
-    # -----------------------------
-    # Claude (CLI)
-    # -----------------------------
-
-    def call_claude(self, prompt: str):
-        process = subprocess.Popen(
-            ["claude", "--print", prompt],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-        output = ""
-
-        for line in process.stdout:
-            print(line, end="")
-            output += line
-
-        process.wait()
-
-        if process.returncode != 0:
-            raise Exception(process.stderr.read())
-
-        return output
-
-    def extract_json(self, output: str):
-        matches = re.findall(r"\{.*\}", output, re.DOTALL)
-        if not matches:
-            raise Exception(f"No JSON found in Claude output:\n{output}")
-        return json.loads(matches[-1])
 
     # -----------------------------
     # GitHub via GH CLI
@@ -139,8 +109,8 @@ Diff:
 {diff}
 """
 
-        output = self.call_claude(prompt)
-        return self.extract_json(output)
+        output = call_claude(prompt)
+        return extract_json(output)
 
     # -----------------------------
     # Formatting
@@ -230,6 +200,6 @@ Diff:
                 "-X", "PUT",
                 "-f", "merge_method=squash"
             ]
-    )
+        )
 
-    print("✅ PR force-merged successfully")    
+        print("✅ PR force-merged successfully")

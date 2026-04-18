@@ -6,13 +6,11 @@ from pathlib import Path
 import argparse
 import sys
 from modules.deploy_to_test import deploy_to_test
-
-##from dotenv import load_dotenv
 from modules.pr_review_stage import run_pr_review_stage
+from modules.utils import call_claude, extract_json, load_agent_skill, inject
 
 # ========= CONFIG =========
 
-AGENTS_PATH = Path("agents")
 MAX_FIX_RETRIES = 2
 
 CONFIG = {
@@ -21,14 +19,12 @@ CONFIG = {
     "auto_merge_on_pass": False,
     "max_fix_iterations": 3,
 
-    "deploy_host": "35.88.13.248",
-    "deploy_user": "ec2-user",
-    "deploy_key": "~/.ssh/unicorn-key-pair-prod.pem"
+    # Deploy credentials — override via environment variables to avoid
+    # committing host/key details into version control.
+    "deploy_host": os.getenv("DEPLOY_HOST", "35.88.13.248"),
+    "deploy_user": os.getenv("DEPLOY_USER", "ec2-user"),
+    "deploy_key": os.getenv("DEPLOY_KEY", "~/.ssh/unicorn-key-pair-prod.pem"),
 }
-
-# Load secret keys from .env file
-##load_dotenv()
-##CONFIG["github_token"] = os.getenv("GITHUB_TOKEN")
 
 # Helper to get remote repo info
 def get_repo_info(repo_path):
@@ -98,14 +94,6 @@ def write_artifact(name: str, content: str):
 def read_artifact(name: str):
     return read_file(ARTIFACTS / f"{name}.json")
 
-def load_agent_skill(name: str):
-    return (AGENTS_PATH / name / "SKILL.md").read_text()
-
-def inject(template: str, variables: dict):
-    for k, v in variables.items():
-        template = template.replace(f"{{{{{k}}}}}", v or "")
-    return template
-
 def get_branch_name():
     return STORY_ID.lower()
 
@@ -142,56 +130,6 @@ def next_step(current):
     return STEPS[idx + 1] if idx + 1 < len(STEPS) else None
 
 # ========= CLAUDE =========
-
-def call_claude(prompt: str, stream: bool = True):
-    ####if stream:
-    print("\n--- CLAUDE RUNNING ---\n")
-
-    process = subprocess.Popen(
-        ["claude", "--print", prompt],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-
-    output = ""
-
-    # -----------------------------
-    # STREAMING MODE
-    # -----------------------------
-    if stream:
-        for line in process.stdout:
-            print(line, end="")
-            output += line
-
-    # -----------------------------
-    # NON-STREAM MODE
-    # -----------------------------
-    else:
-        stdout, stderr = process.communicate()
-        output = stdout
-
-        if process.returncode != 0:
-            raise Exception(stderr)
-
-        return output
-
-    # -----------------------------
-    # FINALIZE
-    # -----------------------------
-    process.wait()
-
-    if process.returncode != 0:
-        raise Exception(process.stderr.read())
-
-    return output
-
-def extract_json(output: str):
-    import re
-    matches = re.findall(r"\{.*\}", output, re.DOTALL)
-    if not matches:
-        raise Exception("No JSON found")
-    return json.loads(matches[-1])
 
 def run_agent(name: str, variables: dict):
     template = load_agent_skill(name)
