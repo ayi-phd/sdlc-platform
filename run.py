@@ -175,29 +175,10 @@ def step_planning(state):
     # -----------------------------
     files, contents = build_repo_context_full(REPO_PATH)
 
-    stack_prompt = f"""
-You are analyzing a code repository.
-
-You DO NOT have filesystem access.
-Use ONLY the provided data.
-
-FULL repository file list:
-{files}
-
-Sample file contents:
-{json.dumps(contents, indent=2)}
-
-Return STRICT JSON:
-
-{{
-  "backend": "...",
-  "frontend": "...",
-  "frameworks": [],
-  "languages": [],
-  "build_tools": "...",
-  "notes": "..."
-}}
-"""
+    stack_prompt = inject(load_agent_skill("repo-analysis"), {
+        "files": str(files),
+        "contents": json.dumps(contents, indent=2),
+    })
 
     stack_output = call_claude(stack_prompt, stream=False)
     stack = extract_json(stack_output)
@@ -475,19 +456,7 @@ def step_release_notes(state):
         text=True
     )
 
-    prompt = f"""
-    Generate concise release notes (1–5 sentences) based on the following code changes.
-
-    Focus on:
-    - user-visible changes
-    - feature behavior
-    - bug fixes
-
-    Do NOT describe internal tooling or pipelines.
-
-    Code diff:
-    {diff[:12000]}
-    """
+    prompt = inject(load_agent_skill("release-notes"), {"diff": diff[:12000]})
 
     output = call_claude(prompt)
 

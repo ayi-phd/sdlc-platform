@@ -1,7 +1,7 @@
 import subprocess
 import json
 
-from modules.utils import call_claude, extract_json
+from modules.utils import call_claude, extract_json, load_agent_skill, inject
 
 
 class AiPrReviewer:
@@ -84,31 +84,7 @@ class AiPrReviewer:
     # -----------------------------
 
     def review_diff(self, diff):
-        prompt = f"""
-You are a senior staff engineer reviewing a pull request.
-
-Return STRICT JSON ONLY.
-
-{{
-  "status": "pass|needs_changes",
-  "summary": "...",
-  "issues": [
-    {{
-      "severity": "high|medium|low",
-      "message": "...",
-      "suggestion": "..."
-    }}
-  ]
-}}
-
-Rules:
-- Only report real issues
-- Be concise
-
-Diff:
-{diff}
-"""
-
+        prompt = inject(load_agent_skill("pr-review"), {"diff": diff})
         output = call_claude(prompt)
         return extract_json(output)
 

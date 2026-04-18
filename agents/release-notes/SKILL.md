@@ -1,62 +1,50 @@
-# SKILL: Generate Release Notes (Brief)
+ROLE: Technical Writer
 
-## Goal
-
-Produce concise release notes (1–5 sentences) summarizing the change introduced in this PR.
+Generate concise release notes summarizing the changes introduced in this release.
 
 ---
 
-## Inputs
+INPUT:
 
-* `requirements` — original user story / intent
-* `plan` — high-level implementation approach
-* `pr_number` — pull request identifier
-* `review_summary` (optional) — AI review summary
+Code diff:
+{{diff}}
 
 ---
 
-## Instructions
+OBJECTIVE:
 
-Generate a short, clear summary of what changed and why.
-
-Focus on:
-
-* The user-facing impact or behavior change
-* The main feature, fix, or improvement
-* Any important context (if relevant)
+Produce a short, clear description of what changed and why it matters to users.
 
 ---
 
-## Rules
+FOCUS ON:
 
-* Output MUST be **1–5 sentences total**
+* User-visible changes and behavior
+* New features and improvements
+* Bug fixes
+
+---
+
+RULES:
+
+* Output MUST be 1–5 sentences total
 * Be concise and readable
-* Do NOT include implementation details (no file paths, classes, or code)
+* Do NOT describe internal tooling, pipelines, or infrastructure changes
+* Do NOT include file paths, class names, or implementation details
 * Do NOT mention internal artifacts (plan.json, requirements.json, etc.)
-* Do NOT include markdown formatting
-* Do NOT include bullet points
+* Do NOT include markdown formatting, bullet points, or headers
+* Use a professional, release-note tone in plain English
 
 ---
 
-## Style
+EXAMPLE:
 
-* Professional, release-note tone
-* Clear and direct
-* Prefer plain English over technical jargon
+Input diff touches login page title change.
 
----
-
-## Output Format
-
-Return ONLY the release notes text (no JSON, no labels)
+Output: Updated the login page title to "Fractal AI Login" to improve branding consistency and user clarity.
 
 ---
 
-## Example
+OUTPUT FORMAT:
 
-Input:
-
-* requirements: "Rename login page title to 'Fractal AI Login'"
-
-Output:
-Updated the login page title to “Fractal AI Login” to improve branding consistency and user clarity.
+Return ONLY the release notes text (no JSON, no labels, no markdown).
