@@ -1,14 +1,14 @@
 import os
+import sys
 import time
 import json
+import argparse
 import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
-import argparse
-import sys
 from modules.deploy_to_test import deploy_to_test
 from modules.pr_review_stage import run_pr_review_stage
-from modules.utils import call_claude, extract_json, load_agent_skill, inject
+from modules.utils import run_claude, extract_json, load_agent_skill, inject, run_claude_code
 
 
 @dataclass
@@ -124,15 +124,7 @@ def save_state(state):
 def run_agent(name: str, variables: dict):
     template = load_agent_skill(name)
     prompt = inject(template, variables)
-    return extract_json(call_claude(prompt, cwd=REPO_PATH))
-
-def run_claude_code(prompt: str):
-    print("\n--- CLAUDE CODE RUNNING ---\n")
-    subprocess.run(
-        ["claude", "--print", "--permission-mode", "acceptEdits", "-p", prompt],
-        cwd=REPO_PATH,
-        check=True
-    )
+    return extract_json(run_claude(prompt, cwd=REPO_PATH))
 
 # ========= STEP FUNCTIONS =========
 
@@ -170,7 +162,7 @@ def step_planning(state):
         "contents": json.dumps(contents, indent=2),
     })
 
-    stack_output = call_claude(stack_prompt, stream=False, cwd=REPO_PATH)
+    stack_output = run_claude(stack_prompt, stream=False, cwd=REPO_PATH)
     stack = extract_json(stack_output)
 
     print("\n🧠 Detected stack:")
@@ -202,12 +194,13 @@ def step_implementation(state):
         "plan": plan
     })
 
-    run_claude_code(prompt)
+    run_claude_code(prompt, cwd=REPO_PATH)
 
     return StepResult()
 
 def step_testing(state):
     while True:
+        print("\n--- RUNNING UNIT TESTS ---\n")
         result = subprocess.run(
             ["mvn", "test"],
             cwd=REPO_PATH,
@@ -231,7 +224,7 @@ def step_testing(state):
         print("\n--- TEST ANALYSIS ---")
         print(analysis.get("summary", ""))
 
-        choice = input("\n1) Fix  2) Skip  3) Abort: ")
+        choice = input("\n👉 1) Fix  2) Skip  3) Abort: ")
 
         if choice == "1":
             if state["retries"] >= MAX_FIX_RETRIES:
@@ -240,7 +233,7 @@ def step_testing(state):
 
             run_claude_code(inject(load_agent_skill("implementation"), {
                 "plan": json.dumps(analysis, indent=2)
-            }))
+            }), cwd=REPO_PATH)
 
             state["retries"] += 1
             continue
@@ -357,13 +350,6 @@ def create_pr():
     head_branch = get_current_branch().strip()
     base_branch = "develop"
 
-    print(f"\n=== STEP: CREATE_PR ===")
-    print(f"DEBUG: REPO_PATH (raw): {REPO_PATH}")
-    print(f"DEBUG: REPO_PATH (resolved): {abs_path}")
-    print(f"DEBUG: Derived Repo Name: {repo_name}")
-    print(f"DEBUG: Head Branch: {head_branch}")
-    print(f"DEBUG: GITHUB_TOKEN in Env: {'FOUND' if 'GITHUB_TOKEN' in os.environ else 'NOT FOUND'}")
-
     # 3. Sanitize Environment
     # We remove the GITHUB_TOKEN so 'gh' uses your authenticated Mac session
     clean_env = os.environ.copy()
@@ -371,6 +357,12 @@ def create_pr():
         print(f"DEBUG: Scrubbing GITHUB_TOKEN from subprocess environment.")
         del clean_env["GITHUB_TOKEN"]
     clean_env.pop("GH_TOKEN", None)
+
+    #print(f"DEBUG: REPO_PATH (raw): {REPO_PATH}")
+    #print(f"DEBUG: REPO_PATH (resolved): {abs_path}")
+    #print(f"DEBUG: Derived Repo Name: {repo_name}")
+    #print(f"DEBUG: Head Branch: {head_branch}")
+    #print(f"DEBUG: GITHUB_TOKEN in Env: {'FOUND' if 'GITHUB_TOKEN' in os.environ else 'NOT FOUND'}")
 
     # 4. Execution with Retry Loop
     max_retries = 3
@@ -434,6 +426,11 @@ def step_pr_review(state):
 
     return StepResult()
 
+def step_deploy_to_test(state):
+    input("\n👉 Approve deployment")
+    deploy_to_test(state, REPO_PATH, CONFIG)
+    return StepResult()
+
 def step_release_notes(state):
     print("\n📝 Generating release notes...\n")
 
@@ -448,14 +445,10 @@ def step_release_notes(state):
 
     prompt = inject(load_agent_skill("release-notes"), {"diff": diff[:12000]})
 
-    output = call_claude(prompt, cwd=REPO_PATH)
+    output = run_claude(prompt, cwd=REPO_PATH)
 
     (STORY_PATH / "release_notes.md").write_text(output.strip())
 
-    return StepResult()
-
-def step_deploy_to_test(state):
-    deploy_to_test(state, REPO_PATH, CONFIG)
     return StepResult()
 
 # =========== ORDERED STEPS LIST ===========
