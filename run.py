@@ -124,7 +124,7 @@ def save_state(state):
 def run_agent(name: str, variables: dict):
     template = load_agent_skill(name)
     prompt = inject(template, variables)
-    return extract_json(call_claude(prompt))
+    return extract_json(call_claude(prompt, cwd=REPO_PATH))
 
 def run_claude_code(prompt: str):
     print("\n--- CLAUDE CODE RUNNING ---\n")
@@ -170,7 +170,7 @@ def step_planning(state):
         "contents": json.dumps(contents, indent=2),
     })
 
-    stack_output = call_claude(stack_prompt, stream=False)
+    stack_output = call_claude(stack_prompt, stream=False, cwd=REPO_PATH)
     stack = extract_json(stack_output)
 
     print("\n🧠 Detected stack:")
@@ -424,7 +424,7 @@ def step_pr_review(state):
     if not pr_number:
         raise Exception("Missing PR number")
 
-    merged = run_pr_review_stage(CONFIG, pr_number)
+    merged = run_pr_review_stage(CONFIG, pr_number, repo_path=REPO_PATH)
 
     state["merged"] = merged   # 👈 THIS IS THE FIX
 
@@ -448,7 +448,7 @@ def step_release_notes(state):
 
     prompt = inject(load_agent_skill("release-notes"), {"diff": diff[:12000]})
 
-    output = call_claude(prompt)
+    output = call_claude(prompt, cwd=REPO_PATH)
 
     (STORY_PATH / "release_notes.md").write_text(output.strip())
 
