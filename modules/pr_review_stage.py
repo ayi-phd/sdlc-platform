@@ -2,7 +2,7 @@ from modules.ai_pr_reviewer import AiPrReviewer
 import sys
 
 
-def run_pr_review_stage(config, pr_number):
+def run_pr_review_stage(config, pr_number, repo_path=None):
     """
     AI review + human approval stage.
     Returns True if PR merged, False otherwise.
@@ -10,7 +10,8 @@ def run_pr_review_stage(config, pr_number):
 
     reviewer = AiPrReviewer(
         owner=config["repo_owner"],
-        repo=config["repo_name"]
+        repo=config["repo_name"],
+        repo_path=repo_path,
     )
 
     print("\n🔍 Running AI PR review...")

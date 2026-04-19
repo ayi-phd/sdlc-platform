@@ -6,12 +6,16 @@ from pathlib import Path
 _AGENTS_PATH = Path(__file__).parent.parent / "agents"
 
 
-def call_claude(prompt: str, stream: bool = True) -> str:
+def call_claude(prompt: str, stream: bool = True, cwd: Path | None = None) -> str:
     """Invoke the Claude CLI and return the full output.
 
     Streaming mode prints each line as it arrives; non-streaming mode waits
     for the process to finish before returning.  Both modes raise on a
     non-zero exit code.
+
+    cwd should be set to the target repository path so the Claude CLI
+    subprocess does not pick up project context from the sdlc-platform
+    working directory.
     """
     print("\n--- CLAUDE RUNNING ---\n")
 
@@ -20,6 +24,7 @@ def call_claude(prompt: str, stream: bool = True) -> str:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        cwd=cwd,
     )
 
     output = ""
