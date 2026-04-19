@@ -11,7 +11,7 @@ def deploy_to_test(state, REPO_PATH, CONFIG):
     # -----------------------------
     if not state.get("merged"):
         print("⏭ Skipping deploy (PR not merged)")
-        return "release_notes"
+        return
 
     print("🚀 PR merged — deploying develop branch...\n")
 
@@ -136,5 +136,3 @@ def deploy_to_test(state, REPO_PATH, CONFIG):
     )
 
     print("\n🎉 Deploy complete\n")
-
-    return "release_notes"
