@@ -6,8 +6,8 @@ import argparse
 import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
-from modules.deploy_to_test import deploy_to_test
-from modules.pr_review_stage import run_pr_review_stage
+from modules.deploy import deploy_backend
+from modules.pr_review_merge import pr_review_merge
 from modules.utils import run_claude, extract_json, load_agent_skill, inject, run_claude_code
 
 
@@ -416,9 +416,9 @@ def step_pr_review(state):
     if not pr_number:
         raise Exception("Missing PR number")
 
-    merged = run_pr_review_stage(CONFIG, pr_number, repo_path=REPO_PATH)
+    merged = pr_review_merge(CONFIG, pr_number, repo_path=REPO_PATH)
 
-    state["merged"] = merged   # 👈 THIS IS THE FIX
+    state["merged"] = merged
 
     if not merged:
         print("❌ PR not merged")
@@ -426,9 +426,9 @@ def step_pr_review(state):
 
     return StepResult()
 
-def step_deploy_to_test(state):
+def step_deploy(state):
     input("\n👉 Approve deployment")
-    deploy_to_test(state, REPO_PATH, CONFIG)
+    deploy_backend(state, REPO_PATH, CONFIG)
     return StepResult()
 
 def step_release_notes(state):
@@ -461,7 +461,7 @@ STEPS = [
     "git_prepare",
     "create_pr",
     "pr_review",
-    "deploy_to_test",
+    "deploy_to_staging",
     "release_notes"
 ]
 
@@ -475,7 +475,7 @@ STEP_HANDLERS = {
     "git_prepare": step_git_prepare,
     "create_pr": step_create_pr,
     "pr_review": step_pr_review,
-    "deploy_to_test": step_deploy_to_test,
+    "deploy_to_staging": step_deploy,
     "release_notes": step_release_notes
 }
 
