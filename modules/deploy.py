@@ -3,8 +3,8 @@ import os
 import glob
 
 
-def deploy_to_test(state, REPO_PATH, CONFIG):
-    print("\n=== STEP: DEPLOY_TO_TEST ===\n")
+def deploy_backend(state, REPO_PATH, CONFIG):
+    print("\n=== STEP: DEPLOY ===\n")
 
     # -----------------------------
     # Only deploy if PR merged

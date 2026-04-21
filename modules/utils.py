@@ -6,7 +6,7 @@ from pathlib import Path
 _AGENTS_PATH = Path(__file__).parent.parent / "agents"
 
 
-def call_claude(prompt: str, stream: bool = True, cwd: Path | None = None) -> str:
+def run_claude(prompt: str, stream: bool = True, cwd: Path | None = None) -> str:
     """Invoke the Claude CLI and return the full output.
 
     Streaming mode prints each line as it arrives; non-streaming mode waits
@@ -96,3 +96,17 @@ def inject(template: str, variables: dict) -> str:
     for k, v in variables.items():
         template = template.replace(f"{{{{{k}}}}}", v or "")
     return template
+
+
+def run_claude_code(prompt: str, cwd: Path) -> None:
+    """Invoke Claude in acceptEdits mode to apply code changes to a repository.
+
+    cwd must be the root of the target repository — Claude will read and
+    modify files relative to that directory.
+    """
+    print("\n--- CLAUDE CODE RUNNING ---\n")
+    subprocess.run(
+        ["claude", "--print", "--permission-mode", "acceptEdits", "-p", prompt],
+        cwd=cwd,
+        check=True,
+    )
