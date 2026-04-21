@@ -1,6 +1,6 @@
 # 🚀 AI-Augmented SDLC Orchestrator
 
-A deterministic, multi-agent system that automates the software development lifecycle — from raw requirements to tested code — while keeping engineers in control at key decision points.
+A deterministic, multi-agent system that automates the software development lifecycle — from raw requirements to tested code — reducing cognitive load on engineers, while keeping them in control at key decision points.
 
 ---
 
@@ -17,7 +17,7 @@ Instead of one-shot prompts, the system breaks SDLC into **independent agents**,
 ## ⚙️ How It Works
 
 ```
-Requirements → Planning → Implementation → Testing → Fix Loop → Release
+Requirements → Planning → Implementation → Testing/Fix Loop → PR creation/AI Review/Merge → Release
 ```
 
 - Each step is handled by a dedicated AI agent (`SKILL.md`)
@@ -29,11 +29,14 @@ Requirements → Planning → Implementation → Testing → Fix Loop → Releas
 
 ## 🔁 Key Features
 
-- **Multi-Agent Architecture**  
+- **Liner, Multi-Agent Architecture**  
   Independent agents for requirements, planning, implementation, testing, and release
 
 - **Stateful Execution**  
   Progress tracked via `state.json` → resume anytime
+
+- **Pre-Review by AI**
+  Leverage AI to pre-review test excution results and PRs
 
 - **Human-in-the-Loop Control**  
   At failure points:
@@ -50,6 +53,9 @@ Requirements → Planning → Implementation → Testing → Fix Loop → Releas
 - **Git-Integrated Workflow**  
   Each story runs on its own branch with traceable commits
 
+- **Automated Deployment**
+  After successful completion and code check-in, auto deploy to cloud 
+
 ---
 
 ## 🧩 Project Structure
@@ -57,19 +63,25 @@ Requirements → Planning → Implementation → Testing → Fix Loop → Releas
 ```
 sdlc-platform/
   agents/          # AI agents (prompt contracts)
+  modules/         # Stage-specific functions
   run.py           # Orchestrator
 
-auth-server/
-  .sdlc/context/   # State, artifacts, logs
-  src/             # Application code
+Demo WebApp:
+
+unicorn-spring-ai-agent/
+  .sdlc/context/                   # State, artifacts, logs
+    FEATURE-UNI-019-user-login     #
+      artifacts                    # Step artifacts
+      input.md                     # Feature requirements
+  src/                             # Application code
 ```
 
 ---
 
-## 🧪 Example Run
+## 🧪 Example execution
 
 ```bash
-python run.py --repo ../auth-server --story AUTH-009-test
+python3 run.py --repo ../unicorn-spring-ai-agent --story FEATURE-UNI-019-user-login --clean-output --skip-approvals
 ```
 
 ```
@@ -86,9 +98,9 @@ Choose action:
 ## 🧠 Key Ideas
 
 - **Structure > Prompting**  
-  Reliable AI systems need workflows, not just prompts
+  Reliable AI systems are based on deterministic workflows
 
-- **State > Memory**  
+- **State > File**  
   Everything is explicit, persisted, and resumable
 
 - **Isolation > Complexity**  
@@ -108,6 +120,6 @@ This project demonstrates:
 
 ## ⭐ Takeaway
 
-> **Software development is a system — not a prompt.**
+> **Keep determenistic workflow, Leverage AI at what it does best (code & docs generation, analysis & review)**
 
-This project brings that system into the AI era.
+This project can be used directly in enterprise orgs to increase velocity while maintaining or reducing risk profile.
