@@ -1,13 +1,20 @@
 import os
+import sys
 import time
 import json
+import argparse
 import subprocess
 from pathlib import Path
-import argparse
-import sys
-from modules.deploy_to_test import deploy_to_test
-from modules.pr_review_stage import run_pr_review_stage
-from modules.utils import call_claude, extract_json, load_agent_skill, inject
+from dataclasses import dataclass, field
+from modules.deploy import deploy_backend
+from modules.pr_review_merge import pr_review_merge
+from modules.utils import run_claude, extract_json, load_agent_skill, inject, run_claude_code
+
+
+@dataclass
+class StepResult:
+    status: str = "success"
+    data: dict = field(default_factory=dict)
 
 # ========= CONFIG =========
 
@@ -43,19 +50,6 @@ def get_repo_info(repo_path):
     owner, repo = path.split("/", 1)
 
     return owner, repo
-
-# Workflow steps
-STEPS = [
-    "requirements",
-    "planning",
-    "implementation",
-    "testing",
-    "git_prepare",
-    "create_pr",
-    "pr_review",
-    "deploy_to_test",
-    "release_notes"
-]
 
 # ========= ARGS =========
 
@@ -125,24 +119,12 @@ def load_state():
 def save_state(state):
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
-def next_step(current):
-    idx = STEPS.index(current)
-    return STEPS[idx + 1] if idx + 1 < len(STEPS) else None
-
 # ========= CLAUDE =========
 
 def run_agent(name: str, variables: dict):
     template = load_agent_skill(name)
     prompt = inject(template, variables)
-    return extract_json(call_claude(prompt))
-
-def run_claude_code(prompt: str):
-    print("\n--- CLAUDE CODE RUNNING ---\n")
-    subprocess.run(
-        ["claude", "--print", "--permission-mode", "acceptEdits", "-p", prompt],
-        cwd=REPO_PATH,
-        check=True
-    )
+    return extract_json(run_claude(prompt, cwd=REPO_PATH))
 
 # ========= STEP FUNCTIONS =========
 
@@ -165,7 +147,7 @@ def step_requirements(state):
     result = run_agent("requirements", {"input": input_md})
     write_artifact("requirements", json.dumps(result, indent=2))
     input("\n👉 Approve requirements")
-    return next_step("requirements")
+    return StepResult()
 
 def step_planning(state):
     print("\n🔍 Detecting tech stack...\n")
@@ -180,7 +162,7 @@ def step_planning(state):
         "contents": json.dumps(contents, indent=2),
     })
 
-    stack_output = call_claude(stack_prompt, stream=False)
+    stack_output = run_claude(stack_prompt, stream=False, cwd=REPO_PATH)
     stack = extract_json(stack_output)
 
     print("\n🧠 Detected stack:")
@@ -203,7 +185,7 @@ def step_planning(state):
     write_artifact("plan", json.dumps(result, indent=2))
 
     input("\n👉 Approve plan")
-    return next_step("planning")
+    return StepResult()
 
 def step_implementation(state):
     plan = read_artifact("plan")
@@ -212,12 +194,13 @@ def step_implementation(state):
         "plan": plan
     })
 
-    run_claude_code(prompt)
+    run_claude_code(prompt, cwd=REPO_PATH)
 
-    return next_step("implementation")
+    return StepResult()
 
 def step_testing(state):
     while True:
+        print("\n--- RUNNING UNIT TESTS ---\n")
         result = subprocess.run(
             ["mvn", "test"],
             cwd=REPO_PATH,
@@ -228,7 +211,7 @@ def step_testing(state):
         if result.returncode == 0:
             print("\n✅ Tests passed\n")
             state["retries"] = 0
-            return next_step("testing")
+            return StepResult()
 
         print("\n❌ Tests failed\n")
 
@@ -241,7 +224,7 @@ def step_testing(state):
         print("\n--- TEST ANALYSIS ---")
         print(analysis.get("summary", ""))
 
-        choice = input("\n1) Fix  2) Skip  3) Abort: ")
+        choice = input("\n👉 1) Fix  2) Skip  3) Abort: ")
 
         if choice == "1":
             if state["retries"] >= MAX_FIX_RETRIES:
@@ -250,13 +233,13 @@ def step_testing(state):
 
             run_claude_code(inject(load_agent_skill("implementation"), {
                 "plan": json.dumps(analysis, indent=2)
-            }))
+            }), cwd=REPO_PATH)
 
             state["retries"] += 1
             continue
 
         elif choice == "2":
-            return next_step("testing")
+            return StepResult()
 
         else:
             sys.exit(1)
@@ -346,7 +329,7 @@ def step_git_prepare(state):
             check=True
         )
 
-    return next_step("git_prepare")
+    return StepResult()
 
 def get_current_branch():
     result = subprocess.check_output(
@@ -367,13 +350,6 @@ def create_pr():
     head_branch = get_current_branch().strip()
     base_branch = "develop"
 
-    print(f"\n=== STEP: CREATE_PR ===")
-    print(f"DEBUG: REPO_PATH (raw): {REPO_PATH}")
-    print(f"DEBUG: REPO_PATH (resolved): {abs_path}")
-    print(f"DEBUG: Derived Repo Name: {repo_name}")
-    print(f"DEBUG: Head Branch: {head_branch}")
-    print(f"DEBUG: GITHUB_TOKEN in Env: {'FOUND' if 'GITHUB_TOKEN' in os.environ else 'NOT FOUND'}")
-
     # 3. Sanitize Environment
     # We remove the GITHUB_TOKEN so 'gh' uses your authenticated Mac session
     clean_env = os.environ.copy()
@@ -381,6 +357,12 @@ def create_pr():
         print(f"DEBUG: Scrubbing GITHUB_TOKEN from subprocess environment.")
         del clean_env["GITHUB_TOKEN"]
     clean_env.pop("GH_TOKEN", None)
+
+    #print(f"DEBUG: REPO_PATH (raw): {REPO_PATH}")
+    #print(f"DEBUG: REPO_PATH (resolved): {abs_path}")
+    #print(f"DEBUG: Derived Repo Name: {repo_name}")
+    #print(f"DEBUG: Head Branch: {head_branch}")
+    #print(f"DEBUG: GITHUB_TOKEN in Env: {'FOUND' if 'GITHUB_TOKEN' in os.environ else 'NOT FOUND'}")
 
     # 4. Execution with Retry Loop
     max_retries = 3
@@ -427,22 +409,27 @@ def step_create_pr(state):
         pr_number = create_pr()
         state["pr_number"] = pr_number
         print(f"🔗 PR created: #{pr_number}")
-    return next_step("create_pr")
+    return StepResult()
 
 def step_pr_review(state):
     pr_number = state.get("pr_number")
     if not pr_number:
         raise Exception("Missing PR number")
 
-    merged = run_pr_review_stage(CONFIG, pr_number)
+    merged = pr_review_merge(CONFIG, pr_number, repo_path=REPO_PATH)
 
-    state["merged"] = merged   # 👈 THIS IS THE FIX
+    state["merged"] = merged
 
     if not merged:
         print("❌ PR not merged")
         sys.exit(1)
 
-    return next_step("pr_review")
+    return StepResult()
+
+def step_deploy(state):
+    input("\n👉 Approve deployment")
+    deploy_backend(state, REPO_PATH, CONFIG)
+    return StepResult()
 
 def step_release_notes(state):
     print("\n📝 Generating release notes...\n")
@@ -458,17 +445,27 @@ def step_release_notes(state):
 
     prompt = inject(load_agent_skill("release-notes"), {"diff": diff[:12000]})
 
-    output = call_claude(prompt)
+    output = run_claude(prompt, cwd=REPO_PATH)
 
     (STORY_PATH / "release_notes.md").write_text(output.strip())
 
-    state["status"] = "DONE"
-    return None
+    return StepResult()
 
-def step_deploy_to_test(state):
-    return deploy_to_test(state, REPO_PATH, CONFIG)
+# =========== ORDERED STEPS LIST ===========
 
-# ========= STEP REGISTRY =========
+STEPS = [
+    "requirements",
+    "planning",
+    "implementation",
+    "testing",
+    "git_prepare",
+    "create_pr",
+    "pr_review",
+    "deploy_to_staging",
+    "release_notes"
+]
+
+# ========= STEP FUNCTIONS REGISTRY =========
 
 STEP_HANDLERS = {
     "requirements": step_requirements,
@@ -478,7 +475,7 @@ STEP_HANDLERS = {
     "git_prepare": step_git_prepare,
     "create_pr": step_create_pr,
     "pr_review": step_pr_review,
-    "deploy_to_test": step_deploy_to_test,
+    "deploy_to_staging": step_deploy,
     "release_notes": step_release_notes
 }
 
@@ -492,16 +489,20 @@ def main():
     print(f"Starting at: {state['current_step']}\n")
 
     try:
-        while state["current_step"]:
-            step = state["current_step"]
-            print(f"\n=== STEP: {step.upper()} ===\n")
+        idx = STEPS.index(state["current_step"])
 
-            handler = STEP_HANDLERS[step]
-            next_s = handler(state)
+        while idx < len(STEPS):
+            step = STEPS[idx]
+            print(f"\n=== STEP {idx}: {step.upper()} ===\n")
 
-            state["current_step"] = next_s
+            STEP_HANDLERS[step](state)
+
+            idx += 1
+            state["current_step"] = STEPS[idx] if idx < len(STEPS) else None
             save_state(state)
 
+        state["status"] = "DONE"
+        save_state(state)
         print("\n🎉 SDLC COMPLETE\n")
 
     except Exception as e:

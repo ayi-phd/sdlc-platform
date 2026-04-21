@@ -1,13 +1,14 @@
 import subprocess
 import json
 
-from modules.utils import call_claude, extract_json, load_agent_skill, inject
+from modules.utils import run_claude, extract_json, load_agent_skill, inject
 
 
 class AiPrReviewer:
-    def __init__(self, owner, repo):
+    def __init__(self, owner, repo, repo_path=None):
         self.owner = owner
         self.repo = repo
+        self.repo_path = repo_path
 
     # -----------------------------
     # GitHub via GH CLI
@@ -85,7 +86,7 @@ class AiPrReviewer:
 
     def review_diff(self, diff):
         prompt = inject(load_agent_skill("pr-review"), {"diff": diff})
-        output = call_claude(prompt)
+        output = run_claude(prompt, cwd=self.repo_path)
         return extract_json(output)
 
     # -----------------------------

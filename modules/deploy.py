@@ -3,15 +3,15 @@ import os
 import glob
 
 
-def deploy_to_test(state, REPO_PATH, CONFIG):
-    print("\n=== STEP: DEPLOY_TO_TEST ===\n")
+def deploy_backend(state, REPO_PATH, CONFIG):
+    print("\n=== STEP: DEPLOY ===\n")
 
     # -----------------------------
     # Only deploy if PR merged
     # -----------------------------
     if not state.get("merged"):
         print("⏭ Skipping deploy (PR not merged)")
-        return "release_notes"
+        return
 
     print("🚀 PR merged — deploying develop branch...\n")
 
@@ -136,5 +136,3 @@ def deploy_to_test(state, REPO_PATH, CONFIG):
     )
 
     print("\n🎉 Deploy complete\n")
-
-    return "release_notes"
