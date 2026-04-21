@@ -30,8 +30,9 @@ Produce a minimal and practical implementation plan that:
 
 IMPORTANT:
 
-* You do NOT have access to file contents
-* File selection is BEST-EFFORT based on names and structure
+* DO NOT modify any other files inside the code base
+* DO NOT access files contents inside code base
+* File selection is your BEST-EFFORT based on names and structure
 * The plan MUST be considered **tentative**
 
 ---
@@ -44,6 +45,12 @@ RULES:
 * KEEP the plan minimal and focused
 * ONLY include relevant parts (backend/frontend/database)
 * DO NOT list unrelated files or components
+
+---
+
+OUTPUT
+
+* YOUR RESPONSE MUST consist of the JSON object below and nothing else.
 
 ---
 

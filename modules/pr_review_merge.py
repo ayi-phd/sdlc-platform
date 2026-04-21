@@ -28,7 +28,8 @@ def pr_review_merge(config, pr_number, repo_path=None):
             reviewer.approve_and_merge(pr_number)
             return True
 
-        user_input = input("Approve & merge PR? (y/n): ").strip().lower()
+        print("👉 Approve & merge PR? (y/n):")
+        user_input = "y" if config.get("skip_approvals") else input().strip().lower()
 
         if user_input == "y":
             reviewer.approve_and_merge(pr_number)

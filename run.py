@@ -58,9 +58,11 @@ parser.add_argument("--repo", required=True)
 parser.add_argument("--story", required=True)
 parser.add_argument("--reset", action="store_true")
 parser.add_argument("--clean-output", action="store_true")
+parser.add_argument("--skip-approvals", action="store_true")
 args = parser.parse_args()
 
 CAPTURE_OUTPUT = args.clean_output
+SKIP_APPROVALS = args.skip_approvals
 
 REPO_PATH = Path(args.repo).resolve()
 
@@ -68,6 +70,7 @@ REPO_PATH = Path(args.repo).resolve()
 owner, repo = get_repo_info(REPO_PATH)
 CONFIG["repo_owner"] = owner
 CONFIG["repo_name"] = repo
+CONFIG["skip_approvals"] = SKIP_APPROVALS
 print(f"🔗 Repo detected: {owner}/{repo}")
 
 SDLC_PATH = REPO_PATH / ".sdlc"
@@ -149,7 +152,9 @@ def step_requirements(state):
     input_md = read_file(STORY_PATH / "input.md")
     result = run_agent("requirements", {"input": input_md})
     write_artifact("requirements", json.dumps(result, indent=2))
-    input("\n👉 Approve requirements")
+    print("\n👉 Approve requirements")
+    if not SKIP_APPROVALS:
+        input()
     return StepResult()
 
 def step_planning(state):
@@ -187,7 +192,9 @@ def step_planning(state):
 
     write_artifact("plan", json.dumps(result, indent=2))
 
-    input("\n👉 Approve plan")
+    print("\n👉 Approve plan")
+    if not SKIP_APPROVALS:
+        input()
     return StepResult()
 
 def step_implementation(state):
@@ -438,7 +445,9 @@ def step_pr_review(state):
     return StepResult()
 
 def step_deploy(state):
-    input("\n👉 Approve deployment")
+    print("\n👉 Approve deployment")
+    if not SKIP_APPROVALS:
+        input()
     deploy_backend(state, REPO_PATH, CONFIG, capture_output=CAPTURE_OUTPUT)
     return StepResult()
 
