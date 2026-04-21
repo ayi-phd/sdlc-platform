@@ -57,7 +57,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--repo", required=True)
 parser.add_argument("--story", required=True)
 parser.add_argument("--reset", action="store_true")
+parser.add_argument("--clean-output", action="store_true")
 args = parser.parse_args()
+
+CAPTURE_OUTPUT = args.clean_output
 
 REPO_PATH = Path(args.repo).resolve()
 
@@ -95,7 +98,7 @@ def branch_exists_remote(branch):
     result = subprocess.run(
         ["git", "ls-remote", "--heads", "origin", branch],
         cwd=REPO_PATH,
-        capture_output=True,
+        capture_output=CAPTURE_OUTPUT or True,
         text=True
     )
     return bool(result.stdout.strip())
@@ -204,7 +207,7 @@ def step_testing(state):
         result = subprocess.run(
             ["mvn", "test"],
             cwd=REPO_PATH,
-            capture_output=True,
+            capture_output=CAPTURE_OUTPUT or True,
             text=True
         )
 
@@ -258,6 +261,7 @@ def step_git_prepare(state):
         subprocess.run(
             ["git", "fetch", "origin", branch],
             cwd=REPO_PATH,
+            capture_output=CAPTURE_OUTPUT,
             check=True
         )
 
@@ -265,6 +269,7 @@ def step_git_prepare(state):
         subprocess.run(
             ["git", "checkout", branch],
             cwd=REPO_PATH,
+            capture_output=CAPTURE_OUTPUT,
             check=True
         )
 
@@ -272,6 +277,7 @@ def step_git_prepare(state):
         subprocess.run(
             ["git", "rebase", f"origin/{branch}"],
             cwd=REPO_PATH,
+            capture_output=CAPTURE_OUTPUT,
             check=True
         )
 
@@ -281,6 +287,7 @@ def step_git_prepare(state):
         subprocess.run(
             ["git", "checkout", "-B", branch],
             cwd=REPO_PATH,
+            capture_output=CAPTURE_OUTPUT,
             check=True
         )
 
@@ -298,12 +305,14 @@ def step_git_prepare(state):
         subprocess.run(
             ["git", "add", "."],
             cwd=REPO_PATH,
+            capture_output=CAPTURE_OUTPUT,
             check=True
         )
 
         subprocess.run(
             ["git", "commit", "-m", f"AI: {branch}"],
             cwd=REPO_PATH,
+            capture_output=CAPTURE_OUTPUT,
             check=True
         )
 
@@ -319,6 +328,7 @@ def step_git_prepare(state):
         subprocess.run(
             ["git", "push"],
             cwd=REPO_PATH,
+            capture_output=CAPTURE_OUTPUT,
             check=True
         )
     else:
@@ -326,6 +336,7 @@ def step_git_prepare(state):
         subprocess.run(
             ["git", "push", "-u", "origin", branch],
             cwd=REPO_PATH,
+            capture_output=CAPTURE_OUTPUT,
             check=True
         )
 
@@ -379,7 +390,7 @@ def create_pr():
                 "--body", "Automated PR created by run.py"
             ],
             cwd=REPO_PATH,
-            capture_output=True,
+            capture_output=CAPTURE_OUTPUT or True,
             text=True,
             env=clean_env
         )
@@ -428,7 +439,7 @@ def step_pr_review(state):
 
 def step_deploy(state):
     input("\n👉 Approve deployment")
-    deploy_backend(state, REPO_PATH, CONFIG)
+    deploy_backend(state, REPO_PATH, CONFIG, capture_output=CAPTURE_OUTPUT)
     return StepResult()
 
 def step_release_notes(state):

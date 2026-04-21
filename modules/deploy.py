@@ -3,7 +3,7 @@ import os
 import glob
 
 
-def deploy_backend(state, REPO_PATH, CONFIG):
+def deploy_backend(state, REPO_PATH, CONFIG, capture_output=False):
     print("\n=== STEP: DEPLOY ===\n")
 
     # -----------------------------
@@ -20,10 +20,10 @@ def deploy_backend(state, REPO_PATH, CONFIG):
     # -----------------------------
     print("🔄 Syncing local repo with origin/develop...")
 
-    subprocess.run(["git", "fetch", "origin"], cwd=REPO_PATH, check=True)
-    subprocess.run(["git", "reset", "--hard"], cwd=REPO_PATH, check=True)
-    subprocess.run(["git", "checkout", "develop"], cwd=REPO_PATH, check=True)
-    subprocess.run(["git", "pull", "origin", "develop"], cwd=REPO_PATH, check=True)
+    subprocess.run(["git", "fetch", "origin"], cwd=REPO_PATH, capture_output=capture_output, check=True)
+    subprocess.run(["git", "reset", "--hard"], cwd=REPO_PATH, capture_output=capture_output, check=True)
+    subprocess.run(["git", "checkout", "develop"], cwd=REPO_PATH, capture_output=capture_output, check=True)
+    subprocess.run(["git", "pull", "origin", "develop"], cwd=REPO_PATH, capture_output=capture_output, check=True)
 
     commit_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"],
@@ -40,6 +40,7 @@ def deploy_backend(state, REPO_PATH, CONFIG):
     subprocess.run(
         ["./mvnw", "clean", "package", "spring-boot:repackage", "-DskipTests"],
         cwd=REPO_PATH,
+        capture_output=capture_output,
         check=True
     )
 
@@ -80,6 +81,7 @@ def deploy_backend(state, REPO_PATH, CONFIG):
             LOCAL_JAR,
             f"{EC2_USER}@{EC2_HOST}:{REMOTE_JAR}"
         ],
+        capture_output=False,
         check=True
     )
 
@@ -132,6 +134,7 @@ def deploy_backend(state, REPO_PATH, CONFIG):
             f"{EC2_USER}@{EC2_HOST}",
             remote_cmd
         ],
+        capture_output=False,
         check=True
     )
 
