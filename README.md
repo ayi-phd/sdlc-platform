@@ -35,8 +35,11 @@ Requirements → Planning → Implementation → Testing/Fix Loop → PR creatio
 - **Stateful Execution**  
   Progress tracked via `state.json` → resume anytime
 
+- **Git-Integrated Workflow**  
+  Each story runs on its own branch with traceable commits
+
 - **Pre-Review by AI**
-  Leverage AI to pre-review test excution results and PRs
+  Uses AI to pre-review test excution results and GitHub PRs
 
 - **Human-in-the-Loop Control**  
   At failure points:
@@ -47,11 +50,8 @@ Requirements → Planning → Implementation → Testing/Fix Loop → PR creatio
   ```
 
 - **Real Code Execution**  
-  - Uses Claude Code to modify actual repositories  
+  - Uses Claude Code to modify files in local repository
   - Runs real test suites (`mvn test`)  
-
-- **Git-Integrated Workflow**  
-  Each story runs on its own branch with traceable commits
 
 - **Automated Deployment**
   After successful completion and code check-in, auto deploy to cloud 
@@ -78,19 +78,20 @@ unicorn-spring-ai-agent/
 
 ---
 
+## 🧪 Prerequisits
+
+- **Claude Code**
+  Installed and logged-in into user's Anthropic account (docs analysis & coding)
+
+- **GitHub CLI**
+  gh is installed and logged-in into GitHub account via Web/Browser (code check-in and PR)
+
+---
+
 ## 🧪 Example execution
 
 ```bash
 python3 run.py --repo ../unicorn-spring-ai-agent --story FEATURE-UNI-019-user-login --clean-output --skip-approvals
-```
-
-```
-❌ Tests failed
-
-Choose action:
-1) Attempt auto-fix and retest
-2) Skip and continue
-3) Abort
 ```
 
 ---
